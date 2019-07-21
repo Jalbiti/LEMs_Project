@@ -176,36 +176,57 @@ identified_enh <- function(map) {
 }
 
 
-sce_subsetting <- function(sce, colmetadata, cluster = NULL, pathway) {
-  if (sce$clusters == 0) {
-    return("Need to cluster before subsetting.")
-  } else {
-    if (!(is.null)) {
-      paste0("sce_", cluster) <- sce[,which(sce$clusters == cluster)]
-      colmetadata <- colmetadata[which(sce$clusters == cluster), ]
-      sce <- paste0("sce_", cluster)
-    } else { #sample according to clusters
-      
+sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
+                           subset_genes = TRUE, cluster_spec = FALSE,
+                           pathway) {
+  if (subset_cells) {
+    if (sum(as.numeric(sce$clusters)) == 0) {
+      return("Need to cluster before subsetting.")
+    } else {
+      n_clusters <- length(unique(sce$clusters))
+      if (!(cluster_spec)) {
+        #select a random cluster_spec
+        set.seed(1234)
+        cluster_spec <- sample(c(1:n_clusters), 1)
+        paste0("sce_", cluster_spec) <- sce[,which(sce$clusters == cluster_spec)]
+        colmetadata <- colmetadata[which(sce$clusters == cluster_spec), ]
+        sce <- paste0("sce_", cluster_spec)
+      } else {
+        #get proportions of clusters
+        prop <- c()
+        for (i in 1:n_clusters) {
+          denom <- length(which(sce$clusters == i))
+          prop[i] <- denom / length(sce$clusters)
+        }
+        #subsample to 5000 cells according to clusters
+        total <- 5000
+        indices <- c()
+        for (i in 1:n_clusters) {
+          subsample <- round(total * prop[i])
+          indices <- append(indices,
+                            sample(which(sce$clusters == i), subsample))
+        }
+        indices <- unique(indices)
+        sce <- sce[, indices]
+      }
     }
-    #subset cells and genes
+  }
+  if (subset_genes) {
     genes <- DelayedMatrixStats::rowVars(logcounts(sce))
     names(genes) <- rownames(sce)
     genes <- sort(genes, decreasing = TRUE)
     
-    #Specify the top 1000 most highly variable genes (hvg) by name
+    #Specify the top 1000 most highly variable genes (hvg) by name #for future use
     metadata(sce)$hvg_genes <- names(genes)[1:1000]
+    # hvg_names <- rowData(sce)$gene_short_name[which(rowData(sce)$id %in% names(genes)[1:1000])]
     
     #Select specific pathway from pathway enrichment
-    # hvg_names <- rowData(sce)$gene_short_name[which(rowData(sce)$id %in% names(genes)[1:1000])]
-    # pathway_GO0008207 <- read.csv("./GO_0008207.txt", header = FALSE)
-    pathway_GO0050900 <- read.csv("./GO_0050900.txt", header = FALSE)
-    
+    screen <- readRDS(file.path(input_dir, "GSE120861_pilot_highmoi_screen.cds.rds"))
     all_genes <- fData(screen)$gene_short_name
-    # selected_genes <- unique(pathway_GO0008207[which(pathway_GO0008207[,1] %in% all_genes), 1])
-    selected_genes <- unique(pathway_GO0050900[which(pathway_GO0050900[,1] %in% all_genes), 1])
+    selected_genes <- unique(pathway[which(pathway[,1] %in% all_genes), 1])
     sce <- sce[which(rowData(sce)$gene_short_name %in% selected_genes),]
     
-    #Looked for paired gene-enhancers
+    #Look for paired gene-enhancers
     eg_pairings <- read.csv(file.path(input_dir, "145_enhancer_gene.csv"), header = TRUE)
     eg_pairings$enhancer <- paste0(eg_pairings$chr.candidate_enhancer, ".",
                                    eg_pairings$start.candidate_enhancer)
@@ -214,15 +235,18 @@ sce_subsetting <- function(sce, colmetadata, cluster = NULL, pathway) {
     paired_genes$gene <- eg_pairings$target_gene_short[match(paired_enh, eg_pairings$enhancer)]
     
     #SINGLE PERTURB
+    map <- as.data.frame(screen@phenoData@data[,15:1575])
+    map <- as.data.frame(lapply(map, as.numeric)) #true input if gRNA is knocked out (true means perturbed)
+    rownames(map) <- rownames(screen@phenoData@data)
     single_pb <- FALSE
-    if (single_pb == TRUE) {
+    if (single_pb) {
       colmetadata <- colmetadata[which(rownames(colmetadata) %in% rownames(single_perturb)),]
       countsdata <- countsdata[which(rownames(countsdata) %in% genes),
                                which(colnames(countsdata) %in% rownames(single_perturb))]
     }
     
     single_pb_E <- FALSE
-    if (single_pb_E == TRUE) {
+    if (single_pb_E) {
       #Subset cells to single perturbed
       single_perturb <- map[which(rowSums(map) == 1),]
       sp_cell_enh <- rownames(map)[which(rowSums(map) == 1)]
@@ -237,10 +261,7 @@ sce_subsetting <- function(sce, colmetadata, cluster = NULL, pathway) {
       E <- E[, which(colnames(E) %in% paired_enh)]
     } else {
       non_single_perturb <- map
-      sp_cell_enh <- rownames(map)[which(rowSums(map) == 1)]
       non_single_perturb <- non_single_perturb[, which((grepl("^chr", colnames(non_single_perturb))))]
-      
-      non_perturb <- colnames(non_single_perturb[, which(colSums(non_single_perturb) == 0)])
       non_single_perturb <- non_single_perturb[, which(colSums(non_single_perturb) != 0)] #keep enhancers that have been perturbed at least once
       
       E <- non_single_perturb
@@ -251,7 +272,7 @@ sce_subsetting <- function(sce, colmetadata, cluster = NULL, pathway) {
     
     Y <- t(countsdata)
     colnames(Y) <- rowmetadata$gene_short_name[which(rowmetadata$id == colnames(Y))]
-    Y <- Y[which(rownames(Y) %in% rownames(E)), which(colnames(Y) %in% selected_genes2)]
+    Y <- Y[which(rownames(Y) %in% rownames(E)), which(colnames(Y) %in% selected_genes)]
     Y <- Y[which(rowSums(Y) != 0), which(colSums(Y) != 0)]
     E <- E[which(rownames(E) %in% rownames(Y)),] #double check
     
