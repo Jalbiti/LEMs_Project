@@ -178,7 +178,7 @@ identified_enh <- function(map) {
 
 sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
                            subset_genes = TRUE, cluster_spec = FALSE,
-                           pathway) {
+                           pathway, boot_cells = FALSE, boot_genes = FALSE) {
   if (subset_cells) {
     if (sum(as.numeric(sce$clusters)) == 0) {
       return("Need to cluster before subsetting.")
@@ -186,7 +186,9 @@ sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
       n_clusters <- length(unique(sce$clusters))
       if (!(cluster_spec)) {
         #select a random cluster_spec
-        set.seed(1234)
+        if (!(boot_cells)) {
+          set.seed(1234)
+        }
         cluster_spec <- sample(c(1:n_clusters), 1)
         paste0("sce_", cluster_spec) <- sce[,which(sce$clusters == cluster_spec)]
         colmetadata <- colmetadata[which(sce$clusters == cluster_spec), ]
@@ -202,6 +204,7 @@ sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
         total <- 5000
         indices <- c()
         for (i in 1:n_clusters) {
+          set.seed(1234)
           subsample <- round(total * prop[i])
           indices <- append(indices,
                             sample(which(sce$clusters == i), subsample))
@@ -273,6 +276,10 @@ sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
     Y <- t(countsdata)
     colnames(Y) <- rowmetadata$gene_short_name[which(rowmetadata$id == colnames(Y))]
     Y <- Y[which(rownames(Y) %in% rownames(E)), which(colnames(Y) %in% selected_genes)]
+    if (boot_genes) {
+      indices <- sample(c(1:ncol(Y)), round(ncol(Y) * 0.5))
+      Y <- Y[,indices]
+    }
     Y <- Y[which(rowSums(Y) != 0), which(colSums(Y) != 0)]
     E <- E[which(rownames(E) %in% rownames(Y)),] #double check
     
@@ -300,8 +307,67 @@ final_lem <- function(Y, E) {
 
 ## we will check the network's stability by bootstrapping
 
-bootsrapping <- function() {
+bootsrapping_cells <- function() {
+  data_sce <- get_data()
   
+  countsdata <- data_sce$countsdata
+  colmetadata <- data_sce$colmetadata
+  rowmetadata <- data_sce$rowmetadata
+  
+  sce <- create_sce(countsdata = countsdata,
+                    colmetadata = colmetadata,
+                    rowmetadata = rowmetadata)
+  
+  sce <- sce_processing(sce)
+  sce <- sce_clustering(sce)
+  pathway_GO0050900 <- read.csv("./GO_0050900.txt", header = FALSE)
+  data_sce <- sce_subsetting(sce, pathway = pathway_GO0050900,
+                             boot_cells = TRUE)
+  
+  # plotUMAP(sce, colour_by = "clusters")
+  
+  sce <- data_sce[[1]]
+  Y <- data_sce[[2]]
+  E <- data_sce[[3]]
+  
+  lem_res <- final_lem(Y, E)
+  return(lem_res)
 }
 
+boot_cells_lem <- list()
+for (i in 1:5) {
+  boot_cells_lem[[i]] <- bootsrapping_cells()
+}
+
+bootsrapping_genes <- function() {
+  data_sce <- get_data()
+  
+  countsdata <- data_sce$countsdata
+  colmetadata <- data_sce$colmetadata
+  rowmetadata <- data_sce$rowmetadata
+  
+  sce <- create_sce(countsdata = countsdata,
+                    colmetadata = colmetadata,
+                    rowmetadata = rowmetadata)
+  
+  sce <- sce_processing(sce)
+  sce <- sce_clustering(sce)
+  pathway_GO0050900 <- read.csv("./GO_0050900.txt", header = FALSE)
+  data_sce <- sce_subsetting(sce, pathway = pathway_GO0050900,
+                             boot_genes = TRUE)
+  
+  # plotUMAP(sce, colour_by = "clusters")
+  
+  sce <- data_sce[[1]]
+  Y <- data_sce[[2]]
+  E <- data_sce[[3]]
+  
+  lem_res <- final_lem(Y, E)
+  return(lem_res)
+}
+
+boot_genes_lem <- list()
+for (i in 1:50) {
+  boot_genes_lem[[i]] <- bootsrapping_genes()
+}
 
