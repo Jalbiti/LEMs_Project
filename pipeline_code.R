@@ -6,6 +6,10 @@ library(BiocSingular)
 library(scater)
 library(scran)
 
+base_dir <- "~/Desktop/Gasperini Data"
+setwd(base_dir)
+input_dir <- file.path(base_dir)
+
 # Data preparation------------------------------------------------
 
 get_data <- function(){
@@ -107,7 +111,7 @@ sce_processing <- function(sce) {
   #Before clustering we perform normalization, feature selection and dimensionality reduction
   # do quality control and normalize data
   sce <- qualitycontrol(sce)
-  sce <- normalize(sce)
+  sce <- normalizeSCE(sce)
   
   ## feature selection
   fit <- scran::trendVar(sce, use.spikes = FALSE)
@@ -176,7 +180,10 @@ identified_enh <- function(map) {
 }
 
 
-sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
+sce_subsetting <- function(sce, coldata = colmetadata,
+                           countsData = countsdata,
+                           rowmetaData = rowmetadata,
+                           subset_cells = TRUE,
                            subset_genes = TRUE, cluster_spec = FALSE,
                            pathway, boot_cells = FALSE, boot_genes = FALSE) {
   if (subset_cells) {
@@ -190,9 +197,8 @@ sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
           set.seed(1234)
         }
         cluster_spec <- sample(c(1:n_clusters), 1)
-        paste0("sce_", cluster_spec) <- sce[,which(sce$clusters == cluster_spec)]
-        colmetadata <- colmetadata[which(sce$clusters == cluster_spec), ]
-        sce <- paste0("sce_", cluster_spec)
+        sce <- sce[,which(sce$clusters == cluster_spec)]
+        colmetadata <- coldata[which(sce$clusters == cluster_spec), ]
       } else {
         #get proportions of clusters
         prop <- c()
@@ -243,7 +249,7 @@ sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
     rownames(map) <- rownames(screen@phenoData@data)
     single_pb <- FALSE
     if (single_pb) {
-      colmetadata <- colmetadata[which(rownames(colmetadata) %in% rownames(single_perturb)),]
+      colmetadata <- coldata[which(rownames(coldata) %in% rownames(single_perturb)),]
       countsdata <- countsdata[which(rownames(countsdata) %in% genes),
                                which(colnames(countsdata) %in% rownames(single_perturb))]
     }
@@ -273,8 +279,8 @@ sce_subsetting <- function(sce, colmetadata, subset_cells = TRUE,
       E <- E[, which(colnames(E) %in% paired_enh)]
     }
     
-    Y <- t(countsdata)
-    colnames(Y) <- rowmetadata$gene_short_name[which(rowmetadata$id == colnames(Y))]
+    Y <- t(countsData)
+    colnames(Y) <- rowmetaData$gene_short_name[which(rowmetaData$id == colnames(Y))]
     Y <- Y[which(rownames(Y) %in% rownames(E)), which(colnames(Y) %in% selected_genes)]
     if (boot_genes) {
       indices <- sample(c(1:ncol(Y)), round(ncol(Y) * 0.5))
@@ -307,9 +313,9 @@ final_lem <- function(Y, E) {
 
 ## we will check the network's stability by bootstrapping
 
-bootsrapping_cells <- function() {
+bootstrapping_cells <- function() {
   data_sce <- get_data()
-  
+  print("Got Data")
   countsdata <- data_sce$countsdata
   colmetadata <- data_sce$colmetadata
   rowmetadata <- data_sce$rowmetadata
@@ -317,13 +323,17 @@ bootsrapping_cells <- function() {
   sce <- create_sce(countsdata = countsdata,
                     colmetadata = colmetadata,
                     rowmetadata = rowmetadata)
+  print("Created SCE")
   
   sce <- sce_processing(sce)
+  print("Processed SCE")
   sce <- sce_clustering(sce)
+  print("Clustered SCE")
   pathway_GO0050900 <- read.csv("./GO_0050900.txt", header = FALSE)
-  data_sce <- sce_subsetting(sce, pathway = pathway_GO0050900,
+  data_sce <- sce_subsetting(sce, coldata = colmetadata,
+                             pathway = pathway_GO0050900,
                              boot_cells = TRUE)
-  
+  print("Subsetted SCE")
   # plotUMAP(sce, colour_by = "clusters")
   
   sce <- data_sce[[1]]
@@ -336,10 +346,11 @@ bootsrapping_cells <- function() {
 
 boot_cells_lem <- list()
 for (i in 1:5) {
-  boot_cells_lem[[i]] <- bootsrapping_cells()
+  boot_cells_lem[[i]] <- bootstrapping_cells()
+  print(i/5, "boots of cells")
 }
 
-bootsrapping_genes <- function() {
+bootstrapping_genes <- function() {
   data_sce <- get_data()
   
   countsdata <- data_sce$countsdata
@@ -367,7 +378,8 @@ bootsrapping_genes <- function() {
 }
 
 boot_genes_lem <- list()
-for (i in 1:50) {
-  boot_genes_lem[[i]] <- bootsrapping_genes()
+for (i in 1:5) {
+  boot_genes_lem[[i]] <- bootstrapping_genes()
+  print(i/5, "boots of genes")
 }
 
